@@ -18,11 +18,14 @@ This REAME file host the instructions for our Docker images and quick start guid
 We provide AMI which have all the websites pre-installed. You can use the AMI to start a new EC2 instance.
 
 ```
-AMI Information: find in console, EC2 - AMI Catalog
-Region: us-east-2
+AMI Information (EC2 console > AMIs). IMPORTANT: AMIs are region-scoped.
+Region: us-east-2 (Ohio)
+Visibility: Public (available to all accounts in us-east-2)
 Name: webarena-with-configurable-map-backend
 ID: ami-08a862bf98e3bd7aa
 ```
+
+Note: If you cannot find the AMI, make sure the EC2 console region is switched to us-east-2 (Ohio).
 
 1. Create a security group that allows all inbound traffic, or at minimum, create a security group with the following inbound rules:
    - SSH (port 22) from your IP
