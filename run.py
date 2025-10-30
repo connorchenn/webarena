@@ -34,6 +34,7 @@ from browser_env.helper_functions import (
     get_action_description,
 )
 from evaluation_harness import evaluator_router
+from skill_manager import SkillManager
 
 LOG_FOLDER = "log_files"
 Path(LOG_FOLDER).mkdir(parents=True, exist_ok=True)
@@ -112,12 +113,12 @@ def config() -> argparse.Namespace:
 
     # lm config
     parser.add_argument("--provider", type=str, default="openai")
-    parser.add_argument("--model", type=str, default="gpt-3.5-turbo-0613")
+    parser.add_argument("--model", type=str, default="gpt-4-turbo-2024-04-09")
     parser.add_argument("--mode", type=str, default="chat")
-    parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top_p", type=float, default=0.9)
     parser.add_argument("--context_length", type=int, default=0)
-    parser.add_argument("--max_tokens", type=int, default=384)
+    parser.add_argument("--max_tokens", type=int, default=4096)
     parser.add_argument("--stop_token", type=str, default=None)
     parser.add_argument(
         "--max_retry",
@@ -144,6 +145,14 @@ def config() -> argparse.Namespace:
 
     # logging related
     parser.add_argument("--result_dir", type=str, default="")
+
+    # skills related
+    parser.add_argument(
+        "--skills_dir",
+        type=str,
+        default="",
+        help="Directory containing compound skills organized by site (e.g., skills/shopping_admin/)",
+    )
     args = parser.parse_args()
 
     # check the whether the action space is compatible with the observation space
@@ -227,6 +236,12 @@ def test(
         "repeating_action": args.repeating_action_failure_th,
     }
 
+    # Initialize skill manager if skills directory is provided
+    skill_manager = None
+    if args.skills_dir and Path(args.skills_dir).exists():
+        skill_manager = SkillManager(args.skills_dir)
+        logger.info(f"Loaded skill manager from {args.skills_dir}")
+
     env = ScriptBrowserEnv(
         headless=not args.render,
         slow_mo=args.slow_mo,
@@ -251,6 +266,8 @@ def test(
                 _c = json.load(f)
                 intent = _c["intent"]
                 task_id = _c["task_id"]
+                sites = _c.get("sites", [])  # Get sites for this task
+
                 # automatically login
                 if _c["storage_state"]:
                     cookie_file_name = os.path.basename(_c["storage_state"])
@@ -277,13 +294,27 @@ def test(
             logger.info(f"[Config file]: {config_file}")
             logger.info(f"[Intent]: {intent}")
 
+            # Get skill descriptions if available
+            skill_descriptions = ""
+            if skill_manager and sites:
+                skill_descriptions = skill_manager.get_skill_descriptions(
+                    sites
+                )
+                if skill_descriptions:
+                    logger.info(f"[Skills]: Loaded skills for sites: {sites}")
+
             agent.reset(config_file)
             trajectory: Trajectory = []
             obs, info = env.reset(options={"config_file": config_file})
             state_info: StateInfo = {"observation": obs, "info": info}
             trajectory.append(state_info)
 
-            meta_data = {"action_history": ["None"]}
+            meta_data = {
+                "action_history": ["None"],
+                "skill_descriptions": skill_descriptions,
+                "sites": sites,
+            }
+
             while True:
                 early_stop_flag, stop_info = early_stop(
                     trajectory, max_steps, early_stop_thresholds
@@ -296,6 +327,75 @@ def test(
                         action = agent.next_action(
                             trajectory, intent, meta_data=meta_data
                         )
+
+                        # Check if the agent called a skill
+                        if skill_manager and action.get("raw_prediction"):
+                            skill_call = skill_manager.parse_skill_call(
+                                action["raw_prediction"]
+                            )
+                            if skill_call:
+                                skill_name, skill_params = skill_call
+                                logger.info(
+                                    f"[Skill Call Detected]: {skill_name} with params {skill_params}"
+                                )
+
+                                try:
+                                    # Execute the skill
+                                    import asyncio
+
+                                    import nest_asyncio
+
+                                    nest_asyncio.apply()
+
+                                    loop = asyncio.get_event_loop()
+                                    skill_result = loop.run_until_complete(
+                                        skill_manager.execute_skill(
+                                            skill_name,
+                                            skill_params,
+                                            env.page,
+                                            sites,
+                                        )
+                                    )
+
+                                    # Store skill result in metadata for agent to see
+                                    logger.info(
+                                        f"[Skill Result]: {skill_result}"
+                                    )
+                                    if "skill_results" not in meta_data:
+                                        meta_data["skill_results"] = []
+                                    meta_data["skill_results"].append(
+                                        {
+                                            "skill": skill_name,
+                                            "params": skill_params,
+                                            "result": skill_result,
+                                        }
+                                    )
+
+                                    # Add skill result to action history so agent sees it
+                                    meta_data["action_history"].append(
+                                        f"Executed skill {skill_name}({skill_params}) -> Result: {skill_result}"
+                                    )
+
+                                    # Convert action to NONE so the original action doesn't execute
+                                    action["action_type"] = ActionTypes.NONE
+
+                                except Exception as e:
+                                    logger.error(f"[Skill Error]: {e}")
+                                    if "skill_results" not in meta_data:
+                                        meta_data["skill_results"] = []
+                                    meta_data["skill_results"].append(
+                                        {
+                                            "skill": skill_name,
+                                            "params": skill_params,
+                                            "result": f"ERROR: {str(e)}",
+                                        }
+                                    )
+                                    meta_data["action_history"].append(
+                                        f"Skill {skill_name} failed: {str(e)}"
+                                    )
+
+                                    # Convert action to NONE even on error so the original action doesn't execute
+                                    action["action_type"] = ActionTypes.NONE
                     except ValueError as e:
                         # get the error message
                         action = create_stop_action(f"ERROR: {str(e)}")

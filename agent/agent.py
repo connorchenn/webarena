@@ -122,6 +122,7 @@ class PromptAgent(Agent):
         prompt = self.prompt_constructor.construct(
             trajectory, intent, meta_data
         )
+
         lm_config = self.lm_config
         n = 0
         while True:
@@ -135,6 +136,17 @@ class PromptAgent(Agent):
                 parsed_response = self.prompt_constructor.extract_action(
                     response
                 )
+
+                import re
+
+                skill_pattern = (
+                    r"skill\[([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:,\s*(.+?))?\]"
+                )
+                if re.search(skill_pattern, parsed_response, re.IGNORECASE):
+                    action = create_none_action()
+                    action["raw_prediction"] = response
+                    break
+
                 if self.action_set_tag == "id_accessibility_tree":
                     action = create_id_based_action(parsed_response)
                 elif self.action_set_tag == "playwright":

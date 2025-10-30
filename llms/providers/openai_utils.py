@@ -170,13 +170,29 @@ async def _throttled_openai_chat_completion_acreate(
     async with limiter:
         for _ in range(3):
             try:
-                return await openai.ChatCompletion.acreate(  # type: ignore
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    top_p=top_p,
-                )
+                # Try with max_completion_tokens first (for newer models)
+                try:
+                    return await openai.ChatCompletion.acreate(  # type: ignore
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_completion_tokens=max_tokens,
+                        top_p=top_p,
+                    )
+                except (openai.error.InvalidRequestError, TypeError) as e:
+                    # Fall back to max_tokens for older models
+                    if "max_completion_tokens" in str(
+                        e
+                    ) or "max_tokens" in str(e):
+                        return await openai.ChatCompletion.acreate(  # type: ignore
+                            model=model,
+                            messages=messages,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            top_p=top_p,
+                        )
+                    else:
+                        raise e
             except openai.error.RateLimitError:
                 logging.warning(
                     "OpenAI API rate limit exceeded. Sleeping for 10 seconds."
@@ -253,14 +269,30 @@ def generate_from_openai_chat_completion(
     openai.api_key = os.environ["OPENAI_API_KEY"]
     openai.organization = os.environ.get("OPENAI_ORGANIZATION", "")
 
-    response = openai.ChatCompletion.create(  # type: ignore
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        top_p=top_p,
-        stop=[stop_token] if stop_token else None,
-    )
+    # Try with max_completion_tokens first (for newer models like gpt-4o, gpt-5-nano)
+    # Fall back to max_tokens for older models
+    try:
+        response = openai.ChatCompletion.create(  # type: ignore
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_completion_tokens=max_tokens,
+            stop=[stop_token] if stop_token else None,
+        )
+    except Exception as e:
+        # If max_completion_tokens is not supported, fall back to max_tokens
+        if "max_completion_tokens" in str(e) or "max_tokens" in str(e):
+            response = openai.ChatCompletion.create(  # type: ignore
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                top_p=top_p,
+                stop=[stop_token] if stop_token else None,
+            )
+        else:
+            raise e
+
     answer: str = response["choices"][0]["message"]["content"]
     return answer
 

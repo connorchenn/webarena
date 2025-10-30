@@ -15,6 +15,7 @@ from browser_env import (
     StateInfo,
     action2str,
 )
+from browser_env.actions import _id2key, _id2role
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -32,6 +33,287 @@ HTML_TEMPLATE = """
     </body>
 </html>
 """
+
+
+def _parse_accessibility_tree_name(node_text: str) -> str:
+    """Parse the name from accessibility tree node text.
+
+    Format: [ID] ROLE 'NAME' properties...
+    Example: [12] textbox 'Search' focused: True required: False
+    Returns: Search (without quotes)
+    """
+    # Match the pattern [ID] ROLE 'NAME' where NAME can contain any chars except single quote
+    # or [ID] ROLE "NAME" for double quotes
+    match = re.search(r"\[\d+\]\s+\w+\s+['\"]([^'\"]*)['\"]", node_text)
+    if match:
+        return match.group(1)
+    return ""
+
+
+def action2playwright_code(
+    action: Action,
+    observation_metadata: dict[str, ObservationMetadata],
+) -> str:
+    """Convert an action to Playwright synchronous API code.
+
+    This mirrors the logic in execute_action() from actions.py to generate
+    the equivalent Playwright sync API code that would be executed.
+    """
+
+    match action["action_type"]:
+        case ActionTypes.CLICK:
+            # Priority: pw_code > element_id > element_role+name
+            if action["pw_code"]:
+                # If pw_code exists, use it directly
+                return action["pw_code"]
+            elif action["element_id"]:
+                # Element ID uses coordinate-based clicking in execution
+                # Try to get semantic information from accessibility tree for better code
+                text_meta_data = observation_metadata.get("text", {})
+                if action["element_id"] in text_meta_data.get(
+                    "obs_nodes_info", {}
+                ):
+                    node_info = text_meta_data["obs_nodes_info"][
+                        action["element_id"]
+                    ]
+                    node_text = node_info.get("text", "").strip()
+
+                    # Parse the accessibility tree format: [ID] ROLE 'NAME' properties...
+                    if node_text:
+                        # Extract the role and name
+                        element_name = _parse_accessibility_tree_name(
+                            node_text
+                        )
+
+                        # Extract role (word after [ID])
+                        role_match = re.search(r"\[\d+\]\s+(\w+)", node_text)
+                        element_role = (
+                            role_match.group(1) if role_match else ""
+                        )
+
+                        if element_name and element_role:
+                            # Generate appropriate locator based on role
+                            element_name_escaped = element_name.replace(
+                                '"', '\\"'
+                            )
+
+                            if element_role == "textbox":
+                                return f'page.get_by_role("textbox", name="{element_name_escaped}").click()'
+                            elif element_role == "button":
+                                return f'page.get_by_role("button", name="{element_name_escaped}").click()'
+                            elif element_role == "link":
+                                return f'page.get_by_role("link", name="{element_name_escaped}").click()'
+                            else:
+                                return f'page.get_by_role("{element_role}", name="{element_name_escaped}").click()'
+
+                # If we can't get semantic info, indicate coordinate-based clicking
+                return (
+                    f'# Click element [{action["element_id"]}] via coordinates'
+                )
+
+            elif action["element_role"] and action["element_name"]:
+                # Use role-based locator with name
+                element_role = _id2role[action["element_role"]]
+                element_name = action["element_name"].replace('"', '\\"')
+
+                # Handle special locator types
+                if element_role == "alt_text":
+                    return f'page.get_by_alt_text("{element_name}").click()'
+                elif element_role == "label":
+                    return f'page.get_by_label("{element_name}").click()'
+                elif element_role == "placeholder":
+                    return f'page.get_by_placeholder("{element_name}").click()'
+                else:
+                    return f'page.get_by_role("{element_role}", name="{element_name}").click()'
+
+            return "# No locator information available for click"
+
+        case ActionTypes.TYPE:
+            text = "".join([_id2key[i] for i in action["text"]])
+            text_escaped = text.replace('"', '\\"').replace("\n", "\\n")
+
+            # Priority: pw_code > element_id > element_role+name
+            if action["pw_code"]:
+                return action["pw_code"]
+            elif action["element_id"]:
+                # Element ID: click element first, then type
+                text_meta_data = observation_metadata.get("text", {})
+                if action["element_id"] in text_meta_data.get(
+                    "obs_nodes_info", {}
+                ):
+                    node_info = text_meta_data["obs_nodes_info"][
+                        action["element_id"]
+                    ]
+                    node_text = node_info.get("text", "").strip()
+
+                    # Parse the accessibility tree format: [ID] ROLE 'NAME' properties...
+                    if node_text:
+                        # Extract the role and name
+                        element_name = _parse_accessibility_tree_name(
+                            node_text
+                        )
+
+                        # Extract role (word after [ID])
+                        role_match = re.search(r"\[\d+\]\s+(\w+)", node_text)
+                        element_role = (
+                            role_match.group(1) if role_match else ""
+                        )
+
+                        if element_name and element_role:
+                            # Generate appropriate locator based on role
+                            element_name_escaped = element_name.replace(
+                                '"', '\\"'
+                            )
+
+                            if element_role == "textbox":
+                                return f'page.get_by_role("textbox", name="{element_name_escaped}").fill("{text_escaped}")'
+                            elif element_role == "searchbox":
+                                return f'page.get_by_role("searchbox", name="{element_name_escaped}").fill("{text_escaped}")'
+                            else:
+                                return f'page.get_by_role("{element_role}", name="{element_name_escaped}").fill("{text_escaped}")'
+
+                # If we can't get semantic info, show the actual execution pattern
+                return f'# Click element [{action["element_id"]}], then: page.keyboard.type("{text_escaped}")'
+
+            elif action["element_role"] and action["element_name"]:
+                # Use role-based locator with name
+                element_role = _id2role[action["element_role"]]
+                element_name = action["element_name"].replace('"', '\\"')
+
+                # Handle special locator types
+                if element_role == "alt_text":
+                    return f'page.get_by_alt_text("{element_name}").fill("{text_escaped}")'
+                elif element_role == "label":
+                    return f'page.get_by_label("{element_name}").fill("{text_escaped}")'
+                elif element_role == "placeholder":
+                    return f'page.get_by_placeholder("{element_name}").fill("{text_escaped}")'
+                else:
+                    return f'page.get_by_role("{element_role}", name="{element_name}").fill("{text_escaped}")'
+
+            # No element specified, just type
+            return f'page.keyboard.type("{text_escaped}")'
+
+        case ActionTypes.HOVER:
+            # Priority: pw_code > element_id > element_role+name
+            if action["pw_code"]:
+                return action["pw_code"]
+            elif action["element_id"]:
+                # Element ID uses coordinate-based hovering
+                text_meta_data = observation_metadata.get("text", {})
+                if action["element_id"] in text_meta_data.get(
+                    "obs_nodes_info", {}
+                ):
+                    node_info = text_meta_data["obs_nodes_info"][
+                        action["element_id"]
+                    ]
+                    node_text = node_info.get("text", "").strip()
+
+                    # Parse the accessibility tree format: [ID] ROLE 'NAME' properties...
+                    if node_text:
+                        # Extract the role and name
+                        element_name = _parse_accessibility_tree_name(
+                            node_text
+                        )
+
+                        # Extract role (word after [ID])
+                        role_match = re.search(r"\[\d+\]\s+(\w+)", node_text)
+                        element_role = (
+                            role_match.group(1) if role_match else ""
+                        )
+
+                        if element_name and element_role:
+                            # Generate appropriate locator based on role
+                            element_name_escaped = element_name.replace(
+                                '"', '\\"'
+                            )
+                            return f'page.get_by_role("{element_role}", name="{element_name_escaped}").hover()'
+
+                return (
+                    f'# Hover element [{action["element_id"]}] via coordinates'
+                )
+
+            elif action["element_role"] and action["element_name"]:
+                element_role = _id2role[action["element_role"]]
+                element_name = action["element_name"].replace('"', '\\"')
+
+                if element_role == "alt_text":
+                    return f'page.get_by_alt_text("{element_name}").hover()'
+                elif element_role == "label":
+                    return f'page.get_by_label("{element_name}").hover()'
+                elif element_role == "placeholder":
+                    return f'page.get_by_placeholder("{element_name}").hover()'
+                else:
+                    return f'page.get_by_role("{element_role}", name="{element_name}").hover()'
+
+            return "# No locator information available for hover"
+
+        case ActionTypes.SCROLL:
+            # Scroll uses page.evaluate() to scroll by viewport height
+            direction = action["direction"]
+            if "up" in direction.lower():
+                return 'page.evaluate("(document.scrollingElement || document.body).scrollTop -= window.innerHeight")'
+            else:
+                return 'page.evaluate("(document.scrollingElement || document.body).scrollTop += window.innerHeight")'
+
+        case ActionTypes.KEY_PRESS:
+            key_comb = action["key_comb"]
+            return f'page.keyboard.press("{key_comb}")'
+
+        case ActionTypes.GOTO_URL:
+            url = action["url"]
+            return f'page.goto("{url}")'
+
+        case ActionTypes.NEW_TAB:
+            return "context.new_page()"
+
+        case ActionTypes.PAGE_CLOSE:
+            return "page.close()"
+
+        case ActionTypes.GO_BACK:
+            return "page.go_back()"
+
+        case ActionTypes.GO_FORWARD:
+            return "page.go_forward()"
+
+        case ActionTypes.PAGE_FOCUS:
+            page_num = action["page_number"]
+            return f"context.pages[{page_num}].bring_to_front()"
+
+        case ActionTypes.CHECK:
+            if action["pw_code"]:
+                return action["pw_code"]
+            return "# Check action requires pw_code"
+
+        case ActionTypes.SELECT_OPTION:
+            if action["pw_code"]:
+                return action["pw_code"]
+            return "# Select option requires pw_code"
+
+        case ActionTypes.STOP:
+            answer = action["answer"]
+            return f"# STOP: {answer}"
+
+        case ActionTypes.NONE:
+            return "# No action"
+
+        case ActionTypes.MOUSE_CLICK:
+            # Low-level coordinate click
+            left, top = action["coords"]
+            return f"page.mouse.click({left} * viewport_width, {top} * viewport_height)"
+
+        case ActionTypes.MOUSE_HOVER:
+            # Low-level coordinate hover
+            left, top = action["coords"]
+            return f"page.mouse.move({left} * viewport_width, {top} * viewport_height)"
+
+        case ActionTypes.KEYBOARD_TYPE:
+            # Low-level keyboard typing
+            text = "".join([_id2key[i] for i in action["text"]])
+            text_escaped = text.replace('"', '\\"').replace("\n", "\\n")
+            return f'page.keyboard.type("{text_escaped}")'
+
+        case _:
+            return f'# Unknown action type: {action["action_type"]}'
 
 
 def get_render_action(
@@ -53,6 +335,10 @@ def get_render_action(
             action_str = f"<div class='raw_parsed_prediction' style='background-color:grey'><pre>{action['raw_prediction']}</pre></div>"
             action_str += f"<div class='action_object' style='background-color:grey'><pre>{repr(action)}</pre></div>"
             action_str += f"<div class='parsed_action' style='background-color:yellow'><pre>{action2str(action, action_set_tag, node_content)}</pre></div>"
+
+            # Add Playwright synchronous API code
+            pw_code = action2playwright_code(action, observation_metadata)
+            action_str += f"<div class='playwright_code' style='background-color:lightblue'><pre><strong>Playwright Sync API:</strong>\n{pw_code}</pre></div>"
 
         case "playwright":
             action_str = action["pw_code"]

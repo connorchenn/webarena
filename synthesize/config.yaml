@@ -1,0 +1,107 @@
+model:
+  name: gpt-5
+  temperature: 0.7
+  max_tokens: 32000
+  response_format:
+    type: json_object
+
+synthesis:
+  max_examples_per_site: 20
+  min_examples_required: 3
+  max_observation_length: 2000
+
+system_prompt: |
+  Analyze the task trajectories and find useful patterns that can be reused. Then, create a reusable Python function using Playwright's synchronous API.
+
+  IMPORTANT: Focus on the SUCCESSFUL trajectories (marked with ✓) to learn patterns. The unsuccessful trajectories (marked with ✗) are provided for context to help you understand what NOT to do or common pitfalls to avoid.
+
+  Write 'skills', which are Python code snippets representing logical procedures to perform the task you just completed. Try to make this logical procedure represent the general case of your task, rather than a specific case.
+  - Do not write "test" or "explore" functions, nor functions that "verify" that a previous skill was completed successfully.
+
+  Use playwright.sync_api (from playwright.sync_api import Page, sync_playwright). Do NOT use async/await - use the synchronous API only.
+
+  **Function Declaration**
+  - You should write a detailed docstring for the function (with triple quotes), describing what it does and how to use it.
+  - Make sure that any unexpected behavior is documented.
+  - Make sure that the observed behavior and mechanics are carefully documented.
+  - Make sure your function begins with a `page.goto("/...")` call, which sets the initial state of the page so that the function can be called correctly. Use a relative URL.
+  - In your docstring, you must include a "usage log" which describes the different times you've used the function and what happened.
+  - Use `page` as the first argument of your function.
+  - Do not use `dict` as a type for any parameter.
+  - Avoid using `*id` or `*url` parameters, because these are not human-readable. For example:
+    - `item_name` is preferred over `item_id`
+    - `post_url` is preferred over `post_url`
+    - Exception to this rule: If one of the input fields on the page requires you to input a URL.
+    - However, you should not do this if you are just going to `page.goto(item_url)` in your code.
+    - We will check your code for such parameters!
+  - Make sure your code is correct, do not use any over complicated Python features (e.g. nested functions, and such).
+  - Make sure your function is synchronous. Do not use any nested functions!!!
+  - Do not use a global try-catch statement, if the only thing it does is print or reraise the error. Only catch exceptions that you can truly recover from.
+  - Do not "overfit" your function name to a specific set of task parameters. Instead, try to generalize your parameters.
+
+  **Selectors**
+  - Note that by default, most string matching in the Playwright API is case-insensitive and only searches for substring matches.
+  - If you want an exact match, you can pass the `exact=True` flag.
+  - Do not overfit to selectors that include numbers in them (e.g. number of notifications, etc. should be replaced by a regex)
+  - In this case, put `import re` *inside* the method body.
+  - For example, `page.get_by_role(name="Hello")` will match <div>Hello</div> and <div>Hello world</div>.
+  - As another example, `page.get_by_role(name="See reviews (194)")` will match <button>See reviews (194)</button> but not <button>See reviews (12)</button>.
+  - If you instead do `page.get_by_role(name="See reviews", exact=True)` it will only match <button>See reviews</button>.
+
+  Example function:
+  def identify_pill(page, imprint, color=None, shape=None):
+      """
+      Automates the process of identifying a pill using the Pill Identifier
+      feature on Drugs.com.
+      Parameters:
+      - page: The Playwright page object.
+      - imprint: The imprint on the pill to be identified.
+      - color: (Optional) The color of the pill.
+      - shape: (Optional) The shape of the pill.
+      This function navigates to the Pill Identifier page, agrees to the terms,
+      inputs the pill's characteristics,
+      and submits the information for identification.
+      Usage Log:
+      - Successfully navigated to the Pill Identifier page and submitted pill
+      information for identification.
+      - Inputted imprint '93 5510', color 'White', and shape 'Oval' and
+      successfully submitted for identification.
+      - Encountered issues with strict mode violations when attempting to click
+      the 'Search' button due to multiple matches.
+      - Updated to use a more specific selector for the 'Search' button to avoid
+      strict mode violations.
+      """
+
+      import re
+      page.goto("https://www.drugs.com/pill_identification.html")
+      page.get_by_role("link", name="Agree and Continue").click()
+      page.get_by_role("textbox", name="Pill Imprint").fill(imprint)
+      if color:
+          page.get_by_role("group", name="Color and shape (optional)").get_by_role("combobox", name="Color (optional)").select_option(color)
+      if shape:
+          page.get_by_role("group", name="Color and shape (optional)").get_by_role("combobox", name="Shape (optional)").select_option(shape)
+      search_button = page.locator("button.ddc-btn.ddc-btn-block[data-submit-loading]")
+      search_button.click()
+
+  Return Format:
+  Please ALWAYS return your output in the following JSON object format:
+  {
+      "function_name": "descriptive_snake_case_name",
+      "description": "Clear description of what the function does and its utility.",
+      "parameters": [
+          {"name": "page", "type": "Page", "description": "Playwright page object."},
+          {"name": "keyword", "type": "str", "description": "Search term."}
+      ],
+      "code": "def function_name(page: Page, keyword: str):\\n    \\\"\\\"\\\"Docstring\\\"\\\"\\\"\\n    page.get_by_role(...).click()\\n    ...",
+      "example_call": {
+          "keyword": "example search term",
+          "other_param": "example value"
+      },
+      "reasoning": "Why this is a useful compound function."
+  }
+
+  IMPORTANT: The "example_call" field must contain realistic example values for ALL parameters except "page".
+  These examples should be representative of real-world usage and will be used for testing the function.
+
+  If you do not find a useful pattern in the analysis, return:
+  {"skip": true, "reason": "..."}

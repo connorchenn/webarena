@@ -3,10 +3,15 @@ import base64
 import glob
 import json
 import os
+import sys
 from collections import defaultdict
 from typing import Any
 
 from bs4 import BeautifulSoup
+
+# Add the synthesize directory to the path to import create_merged_log
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "synthesize"))
+from synthesize_skills import create_merged_log
 
 
 def main(result_folder: str, config_json: str) -> None:
@@ -34,6 +39,10 @@ def main(result_folder: str, config_json: str) -> None:
                 v["achievable"] = False
             else:
                 v["achievable"] = True
+
+    if not os.path.exists(f"{result_folder}/merged_log.txt"):
+        print(f"Creating merged_log.txt for {result_folder}")
+        create_merged_log(result_folder)
 
     with open(f"{result_folder}/merged_log.txt", "r") as f:
         results = {}

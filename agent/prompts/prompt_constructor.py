@@ -164,6 +164,11 @@ class DirectPromptConstructor(PromptConstructor):
     ) -> APIInput:
         """Construct prompt given the trajectory"""
         intro = self.instruction["intro"]
+
+        # Add skill descriptions if available
+        if meta_data.get("skill_descriptions"):
+            intro = intro + "\n\n" + meta_data["skill_descriptions"]
+
         examples = self.instruction["examples"]
         template = self.instruction["template"]
         keywords = self.instruction["meta_data"]["keywords"]
@@ -222,6 +227,11 @@ class CoTPromptConstructor(PromptConstructor):
         meta_data: dict[str, Any] = {},
     ) -> APIInput:
         intro = self.instruction["intro"]
+
+        # Add skill descriptions if available
+        if meta_data.get("skill_descriptions"):
+            intro = intro + "\n\n" + meta_data["skill_descriptions"]
+
         examples = self.instruction["examples"]
         template = self.instruction["template"]
         keywords = self.instruction["meta_data"]["keywords"]
