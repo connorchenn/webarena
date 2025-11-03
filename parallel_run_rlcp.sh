@@ -1,7 +1,7 @@
 #!/bin/bash
 
-result_dir="results/qwen3-32b-t0.7-tp-0.9"
-model="Qwen/Qwen3-32B"
+result_dir="results/cp125-t0.7-tp-0.9"
+model="skyagent-verl-32b-r2e-4500-loop-naacl-64/step_125"
 instruction_path="agent/prompts/jsons/p_cot_id_actree_2s.json"
 
 SERVER="ec2-3-150-123-98.us-east-2.compute.amazonaws.com"
@@ -12,7 +12,7 @@ ENV_VARIABLES="export SHOPPING='http://${SERVER}:7770';export SHOPPING_ADMIN='ht
 num_panes=$(tmux list-panes | wc -l)
 
 # calculate how many panes need to be created
-let "panes_to_create = 6 - num_panes"
+let "panes_to_create = 5 - num_panes"
 
 # array of tmux commands to create each pane
 tmux_commands=(
@@ -33,7 +33,7 @@ done
 # Function to run a job
 run_job() {
     tmux select-pane -t $1
-    tmux send-keys "conda activate ${CONDA_ENV_NAME}; ${ENV_VARIABLES}; until python run.py --test_start_idx $2 --test_end_idx $3 --model ${model} --instruction_path ${instruction_path} --result_dir ${result_dir} --provider huggingface --mode completion --temperature 0.7 --top_p 0.9 --model_endpoint http://localhost:8000/v1 --max_tokens 16384 --max_retry 3; do echo 'crashed' >&2; sleep 1; done" C-m
+    tmux send-keys "conda activate ${CONDA_ENV_NAME}; ${ENV_VARIABLES}; until python run.py --test_start_idx $2 --test_end_idx $3 --model ${model} --instruction_path ${instruction_path} --result_dir ${result_dir} --provider huggingface --mode completion --temperature 0.7 --top_p 0.9 --model_endpoint http://localhost:9000/v1 --max_tokens 16384 --max_retry 3; do echo 'crashed' >&2; sleep 1; done" C-m
     sleep 3
 }
 
@@ -66,5 +66,4 @@ run_batch() {
 
 }
 
-run_batch 482 557 567 577 660 670
-run_batch 762 770 780 790 800 812
+run_batch 480 812

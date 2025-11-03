@@ -10,7 +10,12 @@ from typing import Any
 
 import aiolimiter
 import openai
-import openai.error
+
+try:
+    import openai.error  # OpenAI v0.x
+except (ImportError, AttributeError):
+    # OpenAI v1.x uses different error handling
+    pass
 from tqdm.asyncio import tqdm_asyncio
 
 
@@ -20,7 +25,7 @@ def retry_with_exponential_backoff(  # type: ignore
     exponential_base: float = 2,
     jitter: bool = True,
     max_retries: int = 3,
-    errors: tuple[Any] = (openai.error.RateLimitError,),
+    errors: tuple[Any] = (Exception,),  # Compatible with both v0.x and v1.x
 ):
     """Retry a function with exponential backoff."""
 
@@ -68,21 +73,34 @@ async def _throttled_openai_completion_acreate(
     async with limiter:
         for _ in range(3):
             try:
-                return await openai.Completion.acreate(  # type: ignore
-                    engine=engine,
+                # Use OpenAI v1.x async client
+                client = openai.AsyncOpenAI(
+                    api_key=os.environ.get("OPENAI_API_KEY", ""),
+                    organization=os.environ.get("OPENAI_ORGANIZATION", ""),
+                    timeout=300.0,
+                    max_retries=0,
+                )
+
+                response = await client.completions.create(
+                    model=engine,
                     prompt=prompt,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     top_p=top_p,
                 )
-            except openai.error.RateLimitError:
-                logging.warning(
-                    "OpenAI API rate limit exceeded. Sleeping for 10 seconds."
-                )
-                await asyncio.sleep(10)
-            except openai.error.APIError as e:
-                logging.warning(f"OpenAI API error: {e}")
-                break
+                # Convert to dict-like format for compatibility
+                return {"choices": [{"text": response.choices[0].text}]}
+            except Exception as e:
+                # Handle rate limits and API errors
+                error_str = str(e).lower()
+                if "rate" in error_str or "limit" in error_str:
+                    logging.warning(
+                        "OpenAI API rate limit exceeded. Sleeping for 10 seconds."
+                    )
+                    await asyncio.sleep(10)
+                else:
+                    logging.warning(f"OpenAI API error: {e}")
+                    break
         return {"choices": [{"message": {"content": ""}}]}
 
 
@@ -112,8 +130,6 @@ async def agenerate_from_openai_completion(
         raise ValueError(
             "OPENAI_API_KEY environment variable must be set when using OpenAI API."
         )
-    openai.api_key = os.environ["OPENAI_API_KEY"]
-    openai.organization = os.environ.get("OPENAI_ORGANIZATION", "")
 
     limiter = aiolimiter.AsyncLimiter(requests_per_minute)
     async_responses = [
@@ -145,17 +161,24 @@ def generate_from_openai_completion(
         raise ValueError(
             "OPENAI_API_KEY environment variable must be set when using OpenAI API."
         )
-    openai.api_key = os.environ["OPENAI_API_KEY"]
-    openai.organization = os.environ.get("OPENAI_ORGANIZATION", "")
-    response = openai.Completion.create(  # type: ignore
+
+    # Use OpenAI v1.x client
+    client = openai.OpenAI(
+        api_key=os.environ["OPENAI_API_KEY"],
+        organization=os.environ.get("OPENAI_ORGANIZATION", ""),
+        timeout=300.0,
+        max_retries=0,  # We handle retries with our decorator
+    )
+
+    response = client.completions.create(
         prompt=prompt,
-        engine=engine,
+        model=engine,  # v1.x uses 'model' instead of 'engine'
         temperature=temperature,
         max_tokens=max_tokens,
         top_p=top_p,
-        stop=[stop_token],
+        stop=[stop_token] if stop_token else None,
     )
-    answer: str = response["choices"][0]["text"]
+    answer: str = response.choices[0].text
     return answer
 
 
@@ -170,24 +193,47 @@ async def _throttled_openai_chat_completion_acreate(
     async with limiter:
         for _ in range(3):
             try:
-                return await openai.ChatCompletion.acreate(  # type: ignore
+                # Use OpenAI v1.x async client
+                client = openai.AsyncOpenAI(
+                    api_key=os.environ.get("OPENAI_API_KEY", ""),
+                    organization=os.environ.get("OPENAI_ORGANIZATION", ""),
+                    timeout=300.0,
+                    max_retries=0,
+                )
+
+                response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     top_p=top_p,
                 )
-            except openai.error.RateLimitError:
-                logging.warning(
-                    "OpenAI API rate limit exceeded. Sleeping for 10 seconds."
-                )
-                await asyncio.sleep(10)
-            except asyncio.exceptions.TimeoutError:
-                logging.warning("OpenAI API timeout. Sleeping for 10 seconds.")
-                await asyncio.sleep(10)
-            except openai.error.APIError as e:
-                logging.warning(f"OpenAI API error: {e}")
-                break
+                # Convert to dict-like format for compatibility
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": response.choices[0].message.content
+                            }
+                        }
+                    ]
+                }
+            except Exception as e:
+                # Handle rate limits and timeouts
+                error_str = str(e).lower()
+                if "rate" in error_str or "limit" in error_str:
+                    logging.warning(
+                        "OpenAI API rate limit exceeded. Sleeping for 10 seconds."
+                    )
+                    await asyncio.sleep(10)
+                elif "timeout" in error_str:
+                    logging.warning(
+                        "OpenAI API timeout. Sleeping for 10 seconds."
+                    )
+                    await asyncio.sleep(10)
+                else:
+                    logging.warning(f"OpenAI API error: {e}")
+                    break
         return {"choices": [{"message": {"content": ""}}]}
 
 
@@ -217,8 +263,6 @@ async def agenerate_from_openai_chat_completion(
         raise ValueError(
             "OPENAI_API_KEY environment variable must be set when using OpenAI API."
         )
-    openai.api_key = os.environ["OPENAI_API_KEY"]
-    openai.organization = os.environ.get("OPENAI_ORGANIZATION", "")
 
     limiter = aiolimiter.AsyncLimiter(requests_per_minute)
     async_responses = [
@@ -250,10 +294,16 @@ def generate_from_openai_chat_completion(
         raise ValueError(
             "OPENAI_API_KEY environment variable must be set when using OpenAI API."
         )
-    openai.api_key = os.environ["OPENAI_API_KEY"]
-    openai.organization = os.environ.get("OPENAI_ORGANIZATION", "")
 
-    response = openai.ChatCompletion.create(  # type: ignore
+    # Use OpenAI v1.x client
+    client = openai.OpenAI(
+        api_key=os.environ["OPENAI_API_KEY"],
+        organization=os.environ.get("OPENAI_ORGANIZATION", ""),
+        timeout=300.0,
+        max_retries=0,  # We handle retries with our decorator
+    )
+
+    response = client.chat.completions.create(
         model=model,
         messages=messages,
         temperature=temperature,
@@ -261,7 +311,7 @@ def generate_from_openai_chat_completion(
         top_p=top_p,
         stop=[stop_token] if stop_token else None,
     )
-    answer: str = response["choices"][0]["message"]["content"]
+    answer: str = response.choices[0].message.content
     return answer
 
 

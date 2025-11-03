@@ -283,7 +283,7 @@ def test(
             state_info: StateInfo = {"observation": obs, "info": info}
             trajectory.append(state_info)
 
-            meta_data = {"action_history": ["None"]}
+            meta_data = {"action_history": ["None"], "thinking_history": []}
             while True:
                 early_stop_flag, stop_info = early_stop(
                     trajectory, max_steps, early_stop_thresholds
@@ -314,6 +314,15 @@ def test(
                     action, state_info, meta_data, args.render_screenshot
                 )
                 meta_data["action_history"].append(action_str)
+
+                # Store full prediction including thinking tags (e.g., <think>...</think>)
+                # This preserves complete reasoning for:
+                # 1. Logging in trajectory HTML files
+                # 2. Maintaining context across turns (included in subsequent prompts)
+                if "raw_prediction" in action:
+                    meta_data["thinking_history"].append(
+                        action["raw_prediction"]
+                    )
 
                 if action["action_type"] == ActionTypes.STOP:
                     break
@@ -346,9 +355,6 @@ def test(
                 env.save_trace(
                     Path(args.result_dir) / "traces" / f"{task_id}.zip"
                 )
-
-        except openai.error.OpenAIError as e:
-            logger.info(f"[OpenAI Error] {repr(e)}")
         except Exception as e:
             logger.info(f"[Unhandled Error] {repr(e)}]")
             import traceback

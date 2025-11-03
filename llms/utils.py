@@ -46,6 +46,7 @@ def call_llm(
         assert isinstance(prompt, str)
         response = generate_from_huggingface_completion(
             prompt=prompt,
+            model=lm_config.model,
             model_endpoint=lm_config.gen_config["model_endpoint"],
             temperature=lm_config.gen_config["temperature"],
             top_p=lm_config.gen_config["top_p"],

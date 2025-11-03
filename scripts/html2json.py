@@ -3,10 +3,52 @@ import base64
 import glob
 import json
 import os
+import sys
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from bs4 import BeautifulSoup
+
+# Add the synthesize directory to the path to import create_merged_log
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "synthesize"))
+
+
+def create_merged_log(results_dir):
+    """Create merged_log.txt from log files."""
+    log_file_path = Path(results_dir) / "log_files.txt"
+    merged_log_path = Path(results_dir) / "merged_log.txt"
+
+    if merged_log_path.exists():
+        return True
+
+    if not log_file_path.exists():
+        print(f"Warning: No log_files.txt found in {results_dir}")
+        return False
+
+    with open(log_file_path, "r") as f:
+        log_files = [line.strip() for line in f if line.strip()]
+
+    # Merge all log files
+    merged_content = []
+    for log_file in log_files:
+        # Try both absolute and relative paths
+        log_path = Path(results_dir).parent.parent / log_file
+        if not log_path.exists():
+            log_path = Path(log_file)
+        if not log_path.exists():
+            continue
+
+        with open(log_path, "r") as f:
+            merged_content.extend(f.readlines())
+
+    if merged_content:
+        with open(merged_log_path, "w") as f:
+            f.writelines(merged_content)
+        print(f"✓ Created merged_log.txt")
+        return True
+
+    return False
 
 
 def main(result_folder: str, config_json: str) -> None:
@@ -34,6 +76,10 @@ def main(result_folder: str, config_json: str) -> None:
                 v["achievable"] = False
             else:
                 v["achievable"] = True
+
+    if not os.path.exists(f"{result_folder}/merged_log.txt"):
+        print(f"Creating merged_log.txt for {result_folder}")
+        create_merged_log(result_folder)
 
     with open(f"{result_folder}/merged_log.txt", "r") as f:
         results = {}
