@@ -102,9 +102,24 @@ class PromptConstructor(object):
                     return message
                 else:
                     raise ValueError("Only chat mode is supported for Llama-2")
+            elif (
+                "Qwen" in self.lm_config.model
+                or "qwen" in self.lm_config.model
+                or "skyagent" in self.lm_config.model.lower()
+            ):
+                # Qwen/skyagent uses the same format as OpenAI completion mode
+                message = f"{intro}\n\n"
+                message += "Here are a few examples:\n"
+                for (x, y) in examples:
+                    message += f"Observation\n:{x}\n\n"
+                    message += f"Action: {y}\n\n"
+                message += "Now make prediction given the observation\n\n"
+                message += f"Observation\n:{current}\n\n"
+                message += "Action:"
+                return message
             else:
                 raise ValueError(
-                    f"Huggingface models do not support model_tag {self.lm_config.gen_config['model_tag']}"
+                    f"Huggingface models do not support model {self.lm_config.model}"
                 )
         else:
             raise NotImplementedError(
@@ -220,6 +235,7 @@ class CoTPromptConstructor(PromptConstructor):
         trajectory: Trajectory,
         intent: str,
         meta_data: dict[str, Any] = {},
+        thinking: bool = False,
     ) -> APIInput:
         intro = self.instruction["intro"]
         examples = self.instruction["examples"]
@@ -227,24 +243,29 @@ class CoTPromptConstructor(PromptConstructor):
         keywords = self.instruction["meta_data"]["keywords"]
         state_info: StateInfo = trajectory[-1]  # type: ignore[assignment]
 
-        obs = state_info["observation"][self.obs_modality]
-        max_obs_length = self.lm_config.gen_config["max_obs_length"]
-        if max_obs_length:
-            obs = self.tokenizer.decode(self.tokenizer.encode(obs)[:max_obs_length])  # type: ignore[arg-type]
+        if not thinking:
+            obs = state_info["observation"][self.obs_modality]
+            max_obs_length = self.lm_config.gen_config["max_obs_length"]
+            if max_obs_length:
+                obs = self.tokenizer.decode(self.tokenizer.encode(obs)[:max_obs_length])  # type: ignore[arg-type]
 
-        page = state_info["info"]["page"]
-        url = page.url
-        previous_action_str = meta_data["action_history"][-1]
-        current = template.format(
-            objective=intent,
-            url=self.map_url_to_real(url),
-            observation=obs,
-            previous_action=previous_action_str,
-        )
+            page = state_info["info"]["page"]
+            url = page.url
+            previous_action_str = meta_data["action_history"][-1]
+            current = template.format(
+                objective=intent,
+                url=self.map_url_to_real(url),
+                observation=obs,
+                previous_action=previous_action_str,
+            )
 
-        assert all([f"{{k}}" not in current for k in keywords])
+            assert all([f"{{k}}" not in current for k in keywords])
 
-        prompt = self.get_lm_api_input(intro, examples, current)
+            prompt = self.get_lm_api_input(intro, examples, current)
+        else:
+            # to implement
+            prompt = ""
+
         return prompt
 
     def _extract_action(self, response: str) -> str:
