@@ -117,11 +117,16 @@ class PromptAgent(Agent):
 
     @beartype
     def next_action(
-        self, trajectory: Trajectory, intent: str, meta_data: dict[str, Any]
+        self,
+        trajectory: Trajectory,
+        intent: str,
+        thinking: bool,
+        meta_data: dict[str, Any],
     ) -> Action:
         prompt = self.prompt_constructor.construct(
-            trajectory, intent, meta_data
+            trajectory, intent, thinking, meta_data
         )
+
         lm_config = self.lm_config
         n = 0
         while True:

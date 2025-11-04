@@ -1,11 +1,16 @@
+from pathlib import Path
 from typing import Any
 
 import tiktoken
+from jinja2 import Template
 from transformers import AutoTokenizer, LlamaTokenizer
 
 
 class Tokenizer(object):
     def __init__(self, provider: str, model_name: str) -> None:
+        self.provider = provider
+        self.model_name = model_name
+
         if provider == "openai":
             self.tokenizer = tiktoken.encoding_for_model(model_name)
         elif provider == "huggingface":
@@ -30,6 +35,22 @@ class Tokenizer(object):
                     self.tokenizer.add_bos_token = False  # type: ignore[attr-defined]
                 if hasattr(self.tokenizer, "add_eos_token"):
                     self.tokenizer.add_eos_token = False  # type: ignore[attr-defined]
+
+                # Load custom chat template for Qwen models
+                # This sets the chat template for client-side operations (token counting, etc.)
+                # Note: For vllm deployments, also configure the server with the same template using:
+                #   --chat-template /path/to/qwen3_acc_thinking.jinja2
+                template_path = (
+                    Path(__file__).parent.parent
+                    / "agent"
+                    / "prompts"
+                    / "chat_templates"
+                    / "qwen3_acc_thinking.jinja2"
+                )
+                if template_path.exists():
+                    with open(template_path, "r") as f:
+                        custom_template = f.read()
+                    self.tokenizer.chat_template = custom_template
             else:
                 # Use LlamaTokenizer for other models (e.g., Llama-2)
                 self.tokenizer = LlamaTokenizer.from_pretrained(model_name)

@@ -1,3 +1,4 @@
+import copy
 import json
 import re
 from pathlib import Path
@@ -107,15 +108,32 @@ class PromptConstructor(object):
                 or "qwen" in self.lm_config.model
                 or "skyagent" in self.lm_config.model.lower()
             ):
-                # Qwen/skyagent uses the same format as OpenAI completion mode
-                message = f"{intro}\n\n"
-                message += "Here are a few examples:\n"
+                # Qwen/skyagent uses chat message format
+                message = [{"role": "system", "content": intro}]
                 for (x, y) in examples:
-                    message += f"Observation\n:{x}\n\n"
-                    message += f"Action: {y}\n\n"
-                message += "Now make prediction given the observation\n\n"
-                message += f"Observation\n:{current}\n\n"
-                message += "Action:"
+                    message.append(
+                        {
+                            "role": "system",
+                            "name": "example_user",
+                            "content": x,
+                        }
+                    )
+                    message.append(
+                        {
+                            "role": "system",
+                            "name": "example_assistant",
+                            "content": y,
+                        }
+                    )
+                # Handle both string (non-thinking) and list (thinking) formats
+                if isinstance(current, str):
+                    message.append({"role": "user", "content": current})
+                elif isinstance(current, list):
+                    message += current
+                else:
+                    raise ValueError(
+                        f"Unexpected type for current: {type(current)}"
+                    )
                 return message
             else:
                 raise ValueError(
@@ -130,6 +148,7 @@ class PromptConstructor(object):
         self,
         trajectory: Trajectory,
         intent: str,
+        thinking: bool,
         meta_data: dict[str, Any] = {},
     ) -> APIInput:
         raise NotImplementedError
@@ -175,6 +194,7 @@ class DirectPromptConstructor(PromptConstructor):
         self,
         trajectory: Trajectory,
         intent: str,
+        thinking: bool,
         meta_data: dict[str, Any] = {},
     ) -> APIInput:
         """Construct prompt given the trajectory"""
@@ -234,8 +254,8 @@ class CoTPromptConstructor(PromptConstructor):
         self,
         trajectory: Trajectory,
         intent: str,
+        thinking: bool,
         meta_data: dict[str, Any] = {},
-        thinking: bool = False,
     ) -> APIInput:
         intro = self.instruction["intro"]
         examples = self.instruction["examples"]
@@ -264,7 +284,29 @@ class CoTPromptConstructor(PromptConstructor):
             prompt = self.get_lm_api_input(intro, examples, current)
         else:
             # to implement
-            prompt = ""
+            full_history = copy.deepcopy(meta_data["full_history"])
+            max_obs_length = self.lm_config.gen_config["max_obs_length"]
+
+            for message in full_history:
+                if message["role"] == "user":
+                    message["content"] = message["content"][self.obs_modality]
+                    if max_obs_length:
+                        message["content"] = self.tokenizer.decode(self.tokenizer.encode(message["content"])[:max_obs_length])  # type: ignore[arg-type]
+            page = state_info["info"]["page"]
+            url = page.url
+            previous_action_str = meta_data["action_history"][-1]
+
+            full_history[-1]["content"] = template.format(
+                objective=intent,
+                url=self.map_url_to_real(url),
+                observation=full_history[-1]["content"],
+            )
+
+            assert all(
+                [f"{{k}}" not in full_history[-1]["content"] for k in keywords]
+            )
+
+            prompt = self.get_lm_api_input(intro, examples, full_history)
 
         return prompt
 

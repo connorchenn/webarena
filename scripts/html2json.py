@@ -103,7 +103,9 @@ def main(result_folder: str, config_json: str) -> None:
                     for obv in soup.find_all("div", {"class": "state_obv"})
                 ]
                 base64_images = [
-                    img["src"].split(",")[1] for img in soup.find_all("img")
+                    img["src"].split(",")[1]
+                    for img in soup.find_all("img")
+                    if "," in img.get("src", "")
                 ]
                 image_observations = []
                 # save image to file and change the value to be path

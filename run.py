@@ -89,6 +89,9 @@ def config() -> argparse.Namespace:
     parser.add_argument("--sleep_after_execution", type=float, default=0.0)
 
     parser.add_argument("--max_steps", type=int, default=30)
+    parser.add_argument(
+        "--thinking", action="store_true", help="Enable thinking"
+    )
 
     # agent config
     parser.add_argument("--agent_type", type=str, default="prompt")
@@ -283,7 +286,13 @@ def test(
             state_info: StateInfo = {"observation": obs, "info": info}
             trajectory.append(state_info)
 
-            meta_data = {"action_history": ["None"], "thinking_history": []}
+            meta_data = {
+                "action_history": ["None"],
+                "thinking_history": [],
+                "full_history": [],
+            }
+            # Add initial observation to full_history for thinking mode
+            meta_data["full_history"].append({"role": "user", "content": obs})
             while True:
                 early_stop_flag, stop_info = early_stop(
                     trajectory, max_steps, early_stop_thresholds
@@ -294,7 +303,10 @@ def test(
                 else:
                     try:
                         action = agent.next_action(
-                            trajectory, intent, meta_data=meta_data
+                            trajectory,
+                            intent,
+                            thinking=args.thinking,
+                            meta_data=meta_data,
                         )
                     except ValueError as e:
                         # get the error message
@@ -323,11 +335,23 @@ def test(
                     meta_data["thinking_history"].append(
                         action["raw_prediction"]
                     )
+                    meta_data["full_history"].append(
+                        {
+                            "role": "assistant",
+                            "content": action["raw_prediction"],
+                        }
+                    )
 
                 if action["action_type"] == ActionTypes.STOP:
                     break
 
                 obs, _, terminated, _, info = env.step(action)
+                meta_data["full_history"].append(
+                    {"role": "tool", "content": action_str}
+                )
+                meta_data["full_history"].append(
+                    {"role": "user", "name": "observation", "content": obs}
+                )  # this saves the observation object
                 state_info = {"observation": obs, "info": info}
                 trajectory.append(state_info)
 

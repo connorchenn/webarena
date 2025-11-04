@@ -43,7 +43,8 @@ def call_llm(
                 f"OpenAI models do not support mode {lm_config.mode}"
             )
     elif lm_config.provider == "huggingface":
-        assert isinstance(prompt, str)
+        # Accept both string and list (message format) for huggingface
+        assert isinstance(prompt, (str, list))
         response = generate_from_huggingface_completion(
             prompt=prompt,
             model=lm_config.model,

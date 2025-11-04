@@ -3,7 +3,7 @@ from text_generation import Client
 
 
 def generate_from_huggingface_completion(
-    prompt: str,
+    prompt: str | list[dict],
     model: str,
     model_endpoint: str,
     temperature: float,
@@ -29,6 +29,12 @@ def generate_from_huggingface_completion(
         )
     else:
         # Original text-generation-inference client
+        # If prompt is a list of messages, convert to string
+        if isinstance(prompt, list):
+            raise ValueError(
+                "Message list format is only supported for vllm endpoints. "
+                "Please use a vllm endpoint or convert messages to string format."
+            )
         client = Client(model_endpoint, timeout=60)
         generation: str = client.generate(
             prompt=prompt,
@@ -41,7 +47,7 @@ def generate_from_huggingface_completion(
 
 
 def generate_from_vllm_completion(
-    prompt: str,
+    prompt: str | list[dict],
     model: str,
     model_endpoint: str,
     temperature: float,
@@ -60,10 +66,18 @@ def generate_from_vllm_completion(
     )
 
     try:
+        # Handle both string prompts and message lists
+        if isinstance(prompt, list):
+            # prompt is already a list of messages
+            messages = prompt
+        else:
+            # prompt is a string, wrap it in a user message
+            messages = [{"role": "user", "content": prompt}]
+
         # Use chat completions endpoint (works better with vllm)
         response = client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             temperature=temperature,
             top_p=top_p,
             max_tokens=max_new_tokens,
